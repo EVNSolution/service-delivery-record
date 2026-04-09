@@ -166,7 +166,7 @@ class DeliveryRecordApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(
             mocked_urlopen.call_args_list[2].args[0].full_url,
-            f"http://driver-profile-api:8000/{self.driver_id}/",
+            f"{settings.DRIVER_PROFILE_BASE_URL.rstrip('/')}/{self.driver_id}/",
         )
 
     def test_admin_can_crud_records(self) -> None:
@@ -230,6 +230,43 @@ class DeliveryRecordApiTests(TestCase):
 
         response = self._user_client().get(
             f"/records/?driver_id={self.driver_id}&status={DeliveryRecord.Status.CONFIRMED}"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["source_reference"], "record-001")
+
+    def test_record_list_supports_company_and_fleet_filters(self) -> None:
+        other_company_id = str(uuid4())
+        other_fleet_id = str(uuid4())
+
+        with patch(
+            "deliveryrecords.services.source_clients.SourceClients.validate_company_fleet_scope",
+            return_value=None,
+        ), patch(
+            "deliveryrecords.services.source_clients.SourceClients.validate_driver_exists",
+            return_value=None,
+        ):
+            self._admin_client().post("/records/", self._record_payload(source_reference="record-001"), format="json")
+            self._admin_client().post(
+                "/records/",
+                {
+                    **self._record_payload(source_reference="record-002"),
+                    "fleet_id": other_fleet_id,
+                },
+                format="json",
+            )
+            self._admin_client().post(
+                "/records/",
+                {
+                    **self._record_payload(source_reference="record-003"),
+                    "company_id": other_company_id,
+                },
+                format="json",
+            )
+
+        response = self._user_client().get(
+            f"/records/?company_id={self.company_id}&fleet_id={self.fleet_id}"
         )
 
         self.assertEqual(response.status_code, 200)

@@ -57,6 +57,8 @@ def _parse_uuid_filter(value: str, *, field_name: str):
     list=extend_schema(
         parameters=[
             OpenApiParameter("driver_id", str, OpenApiParameter.QUERY),
+            OpenApiParameter("company_id", str, OpenApiParameter.QUERY),
+            OpenApiParameter("fleet_id", str, OpenApiParameter.QUERY),
             OpenApiParameter("status", str, OpenApiParameter.QUERY),
         ]
     )
@@ -72,9 +74,15 @@ class DeliveryRecordViewSet(viewsets.ModelViewSet):
         if self.request.method == "GET":
             require_nav_access(self.request, "dispatch", "settlements")
         queryset = super().get_queryset()
+        company_id = self.request.query_params.get("company_id")
+        fleet_id = self.request.query_params.get("fleet_id")
         driver_id = self.request.query_params.get("driver_id")
         status = self.request.query_params.get("status")
 
+        if company_id:
+            queryset = queryset.filter(company_id=_parse_uuid_filter(company_id, field_name="company_id"))
+        if fleet_id:
+            queryset = queryset.filter(fleet_id=_parse_uuid_filter(fleet_id, field_name="fleet_id"))
         if driver_id:
             queryset = queryset.filter(driver_id=_parse_uuid_filter(driver_id, field_name="driver_id"))
         if status:
