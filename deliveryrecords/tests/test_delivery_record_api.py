@@ -22,7 +22,7 @@ class DeliveryRecordApiTests(TestCase):
         self.driver_id = str(uuid4())
         self.service_date = "2026-03-24"
 
-    def _issue_token(self, *, role: str) -> str:
+    def _issue_token(self, *, role: str, allowed_nav_keys: list[str] | None = None) -> str:
         now = datetime.now(timezone.utc)
         payload = {
             "sub": str(uuid4()),
@@ -35,6 +35,8 @@ class DeliveryRecordApiTests(TestCase):
             "jti": str(uuid4()),
             "type": "access",
         }
+        if allowed_nav_keys is not None:
+            payload["allowed_nav_keys"] = allowed_nav_keys
         return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
     def _admin_client(self) -> APIClient:
@@ -45,6 +47,12 @@ class DeliveryRecordApiTests(TestCase):
     def _user_client(self) -> APIClient:
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.user_token}")
+        return client
+
+    def _admin_client_with_nav_keys(self, *allowed_nav_keys: str) -> APIClient:
+        client = APIClient()
+        token = self._issue_token(role="admin", allowed_nav_keys=list(allowed_nav_keys))
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         return client
 
     def _record_payload(self, *, source_reference: str = "record-001") -> dict:
@@ -103,6 +111,27 @@ class DeliveryRecordApiTests(TestCase):
 
         self.assertTrue(all(response.status_code == 200 for response in read_responses))
         self.assertTrue(all(response.status_code == 403 for response in write_responses))
+
+    def test_admin_without_dispatch_or_settlements_nav_key_is_denied(self) -> None:
+        client = self._admin_client_with_nav_keys("vehicles")
+
+        record_list_response = client.get("/records/")
+        snapshot_list_response = client.get("/daily-snapshots/")
+
+        self.assertEqual(record_list_response.status_code, 403)
+        self.assertEqual(snapshot_list_response.status_code, 403)
+
+    def test_admin_with_dispatch_nav_key_can_read_delivery_records(self) -> None:
+        client = self._admin_client_with_nav_keys("dispatch")
+
+        self.assertEqual(client.get("/records/").status_code, 200)
+        self.assertEqual(client.get("/daily-snapshots/").status_code, 200)
+
+    def test_admin_with_settlements_nav_key_can_read_delivery_records(self) -> None:
+        client = self._admin_client_with_nav_keys("settlements")
+
+        self.assertEqual(client.get("/records/").status_code, 200)
+        self.assertEqual(client.get("/daily-snapshots/").status_code, 200)
 
     def test_admin_can_post_records_and_get_201(self) -> None:
         with patch(

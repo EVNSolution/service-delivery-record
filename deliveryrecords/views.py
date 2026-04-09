@@ -28,6 +28,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from deliveryrecords.models import DailyDeliveryInputSnapshot, DeliveryRecord
+from deliveryrecords.permissions_navigation import require_nav_access
 from deliveryrecords.permissions import AuthenticatedReadAdminWrite
 from deliveryrecords.serializers import (
     DailyDeliveryInputSnapshotSerializer,
@@ -68,6 +69,8 @@ class DeliveryRecordViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
+        if self.request.method == "GET":
+            require_nav_access(self.request, "dispatch", "settlements")
         queryset = super().get_queryset()
         driver_id = self.request.query_params.get("driver_id")
         status = self.request.query_params.get("status")
@@ -99,6 +102,8 @@ class DailyDeliveryInputSnapshotViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
+        if self.request.method == "GET":
+            require_nav_access(self.request, "dispatch", "settlements")
         queryset = super().get_queryset()
         company_id = self.request.query_params.get("company_id")
         fleet_id = self.request.query_params.get("fleet_id")
