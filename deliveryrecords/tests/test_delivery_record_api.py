@@ -410,6 +410,70 @@ class DeliveryRecordApiTests(TestCase):
         "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
         create=True,
     )
+    def test_bootstrap_from_dispatch_aggregates_multiple_rows_for_same_driver(self, mock_list_rows) -> None:
+        upload_row_id_1 = str(uuid4())
+        upload_row_id_2 = str(uuid4())
+        mock_list_rows.return_value = [
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": upload_row_id_1,
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H2",
+                "detailed_region_text": "10H2-가",
+                "box_count": 100,
+                "household_count": 50,
+                "matched_driver_id": self.driver_id,
+            },
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": upload_row_id_2,
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H3",
+                "detailed_region_text": "10H3-나",
+                "box_count": 33,
+                "household_count": 20,
+                "matched_driver_id": self.driver_id,
+            },
+        ]
+
+        response = self._admin_client().post(
+            "/daily-snapshots/bootstrap-from-dispatch/",
+            {
+                "company_id": self.company_id,
+                "fleet_id": self.fleet_id,
+                "service_date": self.service_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertEqual(response.data["skipped_count"], 0)
+
+        records = DeliveryRecord.objects.filter(
+            source_reference__in=[
+                f"dispatch-upload-row:{upload_row_id_1}",
+                f"dispatch-upload-row:{upload_row_id_2}",
+            ]
+        ).order_by("source_reference")
+        snapshot = DailyDeliveryInputSnapshot.objects.get(
+            company_id=self.company_id,
+            fleet_id=self.fleet_id,
+            driver_id=self.driver_id,
+            service_date=self.service_date,
+        )
+
+        self.assertEqual(records.count(), 2)
+        self.assertEqual(records[0].delivery_count + records[1].delivery_count, 133)
+        self.assertEqual(records[0].payload["small_region_text"], "10H2")
+        self.assertEqual(records[1].payload["small_region_text"], "10H3")
+        self.assertEqual(snapshot.delivery_count, 133)
+        self.assertEqual(snapshot.source_record_count, 2)
+
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
+        create=True,
+    )
     def test_bootstrap_from_dispatch_skips_existing_active_snapshot(self, mock_list_rows) -> None:
         mock_list_rows.return_value = [
             {
