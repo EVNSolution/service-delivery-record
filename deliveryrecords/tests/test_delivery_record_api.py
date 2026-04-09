@@ -355,6 +355,100 @@ class DeliveryRecordApiTests(TestCase):
         self.assertEqual(response.data[0]["fleet_id"], self.fleet_id)
         self.assertEqual(response.data[0]["service_date"], self.service_date)
 
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_creates_daily_snapshots(self, mock_list_rows) -> None:
+        upload_row_id = str(uuid4())
+        mock_list_rows.return_value = [
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": upload_row_id,
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H2",
+                "detailed_region_text": "10H2-가",
+                "box_count": 133,
+                "household_count": 90,
+                "matched_driver_id": self.driver_id,
+            }
+        ]
+
+        response = self._admin_client().post(
+            "/daily-snapshots/bootstrap-from-dispatch/",
+            {
+                "company_id": self.company_id,
+                "fleet_id": self.fleet_id,
+                "service_date": self.service_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertEqual(response.data["skipped_count"], 0)
+        self.assertEqual(len(response.data["created_snapshot_ids"]), 1)
+
+        record = DeliveryRecord.objects.get(source_reference=f"dispatch-upload-row:{upload_row_id}")
+        snapshot = DailyDeliveryInputSnapshot.objects.get(
+            company_id=self.company_id,
+            fleet_id=self.fleet_id,
+            driver_id=self.driver_id,
+            service_date=self.service_date,
+        )
+
+        self.assertEqual(record.delivery_count, 133)
+        self.assertEqual(record.payload["household_count"], 90)
+        self.assertEqual(record.payload["small_region_text"], "10H2")
+        self.assertEqual(record.payload["detailed_region_text"], "10H2-가")
+        self.assertEqual(snapshot.delivery_count, 133)
+        self.assertEqual(snapshot.total_distance_km, Decimal("0.00"))
+        self.assertEqual(snapshot.total_base_amount, Decimal("0.00"))
+        self.assertEqual(snapshot.source_record_count, 1)
+
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_skips_existing_active_snapshot(self, mock_list_rows) -> None:
+        mock_list_rows.return_value = [
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": str(uuid4()),
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H2",
+                "detailed_region_text": "10H2-가",
+                "box_count": 133,
+                "household_count": 90,
+                "matched_driver_id": self.driver_id,
+            }
+        ]
+        DailyDeliveryInputSnapshot.objects.create(
+            company_id=self.company_id,
+            fleet_id=self.fleet_id,
+            driver_id=self.driver_id,
+            service_date=self.service_date,
+            delivery_count=20,
+            total_distance_km=Decimal("0.00"),
+            total_base_amount=Decimal("0.00"),
+            source_record_count=1,
+            status=DailyDeliveryInputSnapshot.Status.ACTIVE,
+        )
+
+        response = self._admin_client().post(
+            "/daily-snapshots/bootstrap-from-dispatch/",
+            {
+                "company_id": self.company_id,
+                "fleet_id": self.fleet_id,
+                "service_date": self.service_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created_count"], 0)
+        self.assertEqual(response.data["skipped_count"], 1)
+
     def test_put_and_delete_are_not_allowed_for_detail_routes(self) -> None:
         with patch(
             "deliveryrecords.services.source_clients.SourceClients.validate_company_fleet_scope",

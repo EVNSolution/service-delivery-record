@@ -96,3 +96,15 @@ class DailyDeliveryInputSnapshotSerializer(_SourceValidatedModelSerializer):
 
 class HealthSerializer(serializers.Serializer):
     status = serializers.CharField()
+
+
+class DispatchSnapshotBootstrapRequestSerializer(serializers.Serializer):
+    company_id = serializers.UUIDField()
+    fleet_id = serializers.UUIDField()
+    service_date = serializers.DateField()
+
+
+class DispatchSnapshotBootstrapResultSerializer(serializers.Serializer):
+    created_count = serializers.IntegerField(min_value=0)
+    skipped_count = serializers.IntegerField(min_value=0)
+    created_snapshot_ids = serializers.ListField(child=serializers.UUIDField())

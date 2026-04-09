@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from django.conf import settings
@@ -27,7 +28,7 @@ class SourceClients:
     def _build_url(self, base_url: str, path: str) -> str:
         return f"{base_url.rstrip('/')}{path}"
 
-    def _request_json(self, *, url: str, authorization: str):
+    def _request_payload(self, *, url: str, authorization: str):
         headers = {"Accept": "application/json"}
         if authorization:
             headers["Authorization"] = authorization
@@ -42,10 +43,18 @@ class SourceClients:
             raise SourceServiceError(f"Upstream request failed: {url}") from exc
         except (URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SourceServiceError(f"Upstream request failed: {url}") from exc
+        return payload
 
+    def _request_json(self, *, url: str, authorization: str):
+        payload = self._request_payload(url=url, authorization=authorization)
         if not isinstance(payload, dict):
             raise SourceServiceError(f"Upstream request failed: {url}")
+        return payload
 
+    def _request_list(self, *, url: str, authorization: str):
+        payload = self._request_payload(url=url, authorization=authorization)
+        if not isinstance(payload, list):
+            raise SourceServiceError(f"Upstream request failed: {url}")
         return payload
 
     def _request_or_validation_error(
@@ -97,3 +106,38 @@ class SourceClients:
 
         if str(driver_payload.get("driver_id")) != driver_id:
             raise SourceServiceError("Upstream request failed: malformed driver payload.")
+
+    def list_confirmed_dispatch_upload_rows(
+        self,
+        *,
+        company_id: str,
+        fleet_id: str,
+        service_date: str,
+        authorization: str,
+    ) -> list[dict]:
+        query = urlencode(
+            {
+                "company_id": company_id,
+                "fleet_id": fleet_id,
+                "dispatch_date": service_date,
+                "upload_status": "confirmed",
+            }
+        )
+        batches = self._request_list(
+            url=self._build_url(settings.DISPATCH_REGISTRY_BASE_URL, f"/upload-batches/?{query}"),
+            authorization=authorization,
+        )
+
+        rows: list[dict] = []
+        for batch in batches:
+            if not isinstance(batch, dict):
+                raise SourceServiceError("Upstream request failed: malformed dispatch upload batch payload.")
+            batch_rows = batch.get("rows", [])
+            if not isinstance(batch_rows, list):
+                raise SourceServiceError("Upstream request failed: malformed dispatch upload batch payload.")
+            for row in batch_rows:
+                if not isinstance(row, dict):
+                    raise SourceServiceError("Upstream request failed: malformed dispatch upload row payload.")
+                rows.append(row)
+
+        return rows
