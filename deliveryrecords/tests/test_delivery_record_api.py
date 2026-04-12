@@ -359,7 +359,11 @@ class DeliveryRecordApiTests(TestCase):
         "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
         create=True,
     )
-    def test_bootstrap_from_dispatch_creates_daily_snapshots(self, mock_list_rows) -> None:
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.bulk_lookup_attendance_days",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_creates_daily_snapshots(self, mock_lookup_days, mock_list_rows) -> None:
         upload_row_id = str(uuid4())
         mock_list_rows.return_value = [
             {
@@ -371,6 +375,13 @@ class DeliveryRecordApiTests(TestCase):
                 "box_count": 133,
                 "household_count": 90,
                 "matched_driver_id": self.driver_id,
+            }
+        ]
+        mock_lookup_days.return_value = [
+            {
+                "driver_id": self.driver_id,
+                "attendance_date": self.service_date,
+                "final_status": "worked",
             }
         ]
 
@@ -410,7 +421,11 @@ class DeliveryRecordApiTests(TestCase):
         "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
         create=True,
     )
-    def test_bootstrap_from_dispatch_aggregates_multiple_rows_for_same_driver(self, mock_list_rows) -> None:
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.bulk_lookup_attendance_days",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_aggregates_multiple_rows_for_same_driver(self, mock_lookup_days, mock_list_rows) -> None:
         upload_row_id_1 = str(uuid4())
         upload_row_id_2 = str(uuid4())
         mock_list_rows.return_value = [
@@ -434,6 +449,13 @@ class DeliveryRecordApiTests(TestCase):
                 "household_count": 20,
                 "matched_driver_id": self.driver_id,
             },
+        ]
+        mock_lookup_days.return_value = [
+            {
+                "driver_id": self.driver_id,
+                "attendance_date": self.service_date,
+                "final_status": "worked",
+            }
         ]
 
         response = self._admin_client().post(
@@ -465,8 +487,10 @@ class DeliveryRecordApiTests(TestCase):
 
         self.assertEqual(records.count(), 2)
         self.assertEqual(records[0].delivery_count + records[1].delivery_count, 133)
-        self.assertEqual(records[0].payload["small_region_text"], "10H2")
-        self.assertEqual(records[1].payload["small_region_text"], "10H3")
+        self.assertEqual(
+            {records[0].payload["small_region_text"], records[1].payload["small_region_text"]},
+            {"10H2", "10H3"},
+        )
         self.assertEqual(snapshot.delivery_count, 133)
         self.assertEqual(snapshot.source_record_count, 2)
 
@@ -474,7 +498,11 @@ class DeliveryRecordApiTests(TestCase):
         "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
         create=True,
     )
-    def test_bootstrap_from_dispatch_skips_existing_active_snapshot(self, mock_list_rows) -> None:
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.bulk_lookup_attendance_days",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_skips_existing_active_snapshot(self, mock_lookup_days, mock_list_rows) -> None:
         mock_list_rows.return_value = [
             {
                 "upload_batch_id": str(uuid4()),
@@ -485,6 +513,13 @@ class DeliveryRecordApiTests(TestCase):
                 "box_count": 133,
                 "household_count": 90,
                 "matched_driver_id": self.driver_id,
+            }
+        ]
+        mock_lookup_days.return_value = [
+            {
+                "driver_id": self.driver_id,
+                "attendance_date": self.service_date,
+                "final_status": "worked",
             }
         ]
         DailyDeliveryInputSnapshot.objects.create(
@@ -512,6 +547,118 @@ class DeliveryRecordApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["created_count"], 0)
         self.assertEqual(response.data["skipped_count"], 1)
+
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
+        create=True,
+    )
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.bulk_lookup_attendance_days",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_skips_non_worked_attendance_days(self, mock_lookup_days, mock_list_rows) -> None:
+        day_off_driver_id = str(uuid4())
+        mock_list_rows.return_value = [
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": str(uuid4()),
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H2",
+                "detailed_region_text": "10H2-가",
+                "box_count": 133,
+                "household_count": 90,
+                "matched_driver_id": self.driver_id,
+            },
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": str(uuid4()),
+                "external_user_name": "ZD휴무",
+                "small_region_text": "00",
+                "detailed_region_text": "",
+                "box_count": 0,
+                "household_count": 0,
+                "matched_driver_id": day_off_driver_id,
+            },
+        ]
+        mock_lookup_days.return_value = [
+            {
+                "driver_id": self.driver_id,
+                "attendance_date": self.service_date,
+                "final_status": "worked",
+            },
+            {
+                "driver_id": day_off_driver_id,
+                "attendance_date": self.service_date,
+                "final_status": "day_off",
+            },
+        ]
+
+        response = self._admin_client().post(
+            "/daily-snapshots/bootstrap-from-dispatch/",
+            {
+                "company_id": self.company_id,
+                "fleet_id": self.fleet_id,
+                "service_date": self.service_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created_count"], 1)
+        self.assertEqual(response.data["skipped_count"], 1)
+        self.assertTrue(
+            DailyDeliveryInputSnapshot.objects.filter(
+                company_id=self.company_id,
+                fleet_id=self.fleet_id,
+                driver_id=self.driver_id,
+                service_date=self.service_date,
+            ).exists()
+        )
+        self.assertFalse(
+            DailyDeliveryInputSnapshot.objects.filter(
+                company_id=self.company_id,
+                fleet_id=self.fleet_id,
+                driver_id=day_off_driver_id,
+                service_date=self.service_date,
+            ).exists()
+        )
+
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.list_confirmed_dispatch_upload_rows",
+        create=True,
+    )
+    @patch(
+        "deliveryrecords.services.source_clients.SourceClients.bulk_lookup_attendance_days",
+        create=True,
+    )
+    def test_bootstrap_from_dispatch_rejects_missing_attendance_truth(self, mock_lookup_days, mock_list_rows) -> None:
+        mock_list_rows.return_value = [
+            {
+                "upload_batch_id": str(uuid4()),
+                "upload_row_id": str(uuid4()),
+                "external_user_name": "ZD홍길동",
+                "small_region_text": "10H2",
+                "detailed_region_text": "10H2-가",
+                "box_count": 133,
+                "household_count": 90,
+                "matched_driver_id": self.driver_id,
+            }
+        ]
+        mock_lookup_days.return_value = []
+
+        response = self._admin_client().post(
+            "/daily-snapshots/bootstrap-from-dispatch/",
+            {
+                "company_id": self.company_id,
+                "fleet_id": self.fleet_id,
+                "service_date": self.service_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["code"], "validation_error")
+        self.assertEqual(DailyDeliveryInputSnapshot.objects.count(), 0)
 
     def test_put_and_delete_are_not_allowed_for_detail_routes(self) -> None:
         with patch(

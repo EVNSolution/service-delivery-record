@@ -175,8 +175,31 @@ class DispatchSnapshotBootstrapView(APIView):
                 continue
             rows_by_driver.setdefault(str(matched_driver_id), []).append(row)
 
+        attendance_days = SourceClients().bulk_lookup_attendance_days(
+            keys=[
+                {
+                    "driver_id": driver_id,
+                    "attendance_date": str(payload["service_date"]),
+                }
+                for driver_id in rows_by_driver
+            ],
+            authorization=authorization,
+        )
+        attendance_by_driver = {
+            str(day.get("driver_id")): day
+            for day in attendance_days
+            if isinstance(day, dict) and str(day.get("attendance_date")) == str(payload["service_date"])
+        }
+
         with transaction.atomic():
             for driver_id, driver_rows in rows_by_driver.items():
+                attendance_day = attendance_by_driver.get(driver_id)
+                if attendance_day is None:
+                    raise ValidationError({"detail": ["Attendance truth is required before bootstrap."]})
+                if attendance_day.get("final_status") != "worked":
+                    skipped_count += 1
+                    continue
+
                 existing_snapshot = DailyDeliveryInputSnapshot.objects.filter(
                     company_id=payload["company_id"],
                     fleet_id=payload["fleet_id"],

@@ -28,12 +28,16 @@ class SourceClients:
     def _build_url(self, base_url: str, path: str) -> str:
         return f"{base_url.rstrip('/')}{path}"
 
-    def _request_payload(self, *, url: str, authorization: str):
+    def _request_payload(self, *, url: str, authorization: str, method: str = "GET", body: dict | None = None):
         headers = {"Accept": "application/json"}
         if authorization:
             headers["Authorization"] = authorization
+        data = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
 
-        request = Request(url, headers=headers)
+        request = Request(url, headers=headers, method=method, data=data)
         try:
             with urlopen(request, timeout=5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -45,14 +49,14 @@ class SourceClients:
             raise SourceServiceError(f"Upstream request failed: {url}") from exc
         return payload
 
-    def _request_json(self, *, url: str, authorization: str):
-        payload = self._request_payload(url=url, authorization=authorization)
+    def _request_json(self, *, url: str, authorization: str, method: str = "GET", body: dict | None = None):
+        payload = self._request_payload(url=url, authorization=authorization, method=method, body=body)
         if not isinstance(payload, dict):
             raise SourceServiceError(f"Upstream request failed: {url}")
         return payload
 
-    def _request_list(self, *, url: str, authorization: str):
-        payload = self._request_payload(url=url, authorization=authorization)
+    def _request_list(self, *, url: str, authorization: str, method: str = "GET", body: dict | None = None):
+        payload = self._request_payload(url=url, authorization=authorization, method=method, body=body)
         if not isinstance(payload, list):
             raise SourceServiceError(f"Upstream request failed: {url}")
         return payload
@@ -141,3 +145,20 @@ class SourceClients:
                 rows.append(row)
 
         return rows
+
+    def bulk_lookup_attendance_days(
+        self,
+        *,
+        keys: list[dict],
+        authorization: str,
+    ) -> list[dict]:
+        payload = self._request_json(
+            url=self._build_url(settings.ATTENDANCE_REGISTRY_BASE_URL, "/internal/days:bulk-lookup/"),
+            authorization=authorization,
+            method="POST",
+            body={"keys": keys},
+        )
+        days = payload.get("days")
+        if not isinstance(days, list):
+            raise SourceServiceError("Upstream request failed: malformed attendance lookup payload.")
+        return days
