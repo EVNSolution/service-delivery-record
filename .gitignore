@@ -12,3 +12,16 @@ __pycache__/
 .venv312
 db.sqlite3
 .venv*
+
+# Public repo hygiene
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+*.sqlite3
+*.log
+.vscode/
+.idea/
